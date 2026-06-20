@@ -12,9 +12,12 @@ will roughly break even before costs and lose after them.
 from __future__ import annotations
 
 from collections import deque
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .models import Bar, Order, OrderType, Side
+
+if TYPE_CHECKING:
+    from .sizer import PositionSizer
 
 
 class Context:
@@ -47,15 +50,19 @@ class Strategy:
 
 class SmaCrossStrategy(Strategy):
     def __init__(self, symbol: str, fast: int = 10, slow: int = 30,
-                 qty: int = 100, stop_pct: float = 0.004):
-        self.symbol = symbol
-        self.fast, self.slow = fast, slow
-        self.qty = qty
+                 qty: int = 100, stop_pct: float = 0.004,
+                 sizer: Optional["PositionSizer"] = None):
+        self.symbol   = symbol
+        self.fast     = fast
+        self.slow     = slow
+        self.qty      = qty          # fallback fixed qty when sizer is None
         self.stop_pct = stop_pct
+        self.sizer    = sizer
         self.closes: deque = deque(maxlen=slow)
         self.prev_fast: Optional[float] = None
         self.prev_slow: Optional[float] = None
         self.stop_order_id: Optional[int] = None
+        self._entry_qty: int = 0     # actual qty submitted on entry (for matching exit)
 
     @staticmethod
     def _sma(values: deque, n: int) -> Optional[float]:
@@ -64,16 +71,26 @@ class SmaCrossStrategy(Strategy):
         v = list(values)[-n:]
         return sum(v) / n
 
+    def _resolve_qty(self, price: float) -> int:
+        if self.sizer is not None:
+            return self.sizer.qty(
+                price=price,
+                stop_pct=self.stop_pct,
+                recent_closes=list(self.closes),
+            )
+        return self.qty
+
     def on_bar(self, bar: Bar, ctx: Context) -> None:
         self.closes.append(bar.close)
-        fast = self._sma(self.closes, self.fast)
-        slow = self._sma(self.closes, self.slow)
+        fast     = self._sma(self.closes, self.fast)
+        slow     = self._sma(self.closes, self.slow)
         qty_held = ctx.position_qty(self.symbol)
 
-        # reconcile: if the protective stop fired and we're flat, drop the stale id
+        # if the protective stop fired and we're now flat, clean up stale id
         if qty_held == 0 and self.stop_order_id is not None:
             ctx.cancel(self.stop_order_id)
-            self.stop_order_id = None
+            self.stop_order_id  = None
+            self._entry_qty     = 0
 
         if (fast is not None and slow is not None
                 and self.prev_fast is not None and self.prev_slow is not None):
@@ -81,21 +98,28 @@ class SmaCrossStrategy(Strategy):
             bear_cross = self.prev_fast >= self.prev_slow and fast < slow
 
             if bull_cross and qty_held == 0:
-                ctx.submit(Order(self.symbol, Side.BUY, self.qty, OrderType.MARKET, tag="entry"))
+                entry_qty = self._resolve_qty(bar.close)
+                self._entry_qty = entry_qty
+                ctx.submit(Order(self.symbol, Side.BUY, entry_qty,
+                                 OrderType.MARKET, tag="entry"))
                 stop_px = round(bar.close * (1 - self.stop_pct), 2)
                 self.stop_order_id = ctx.submit(
-                    Order(self.symbol, Side.SELL, self.qty, OrderType.STOP,
+                    Order(self.symbol, Side.SELL, entry_qty, OrderType.STOP,
                           stop_price=stop_px, tag="stop"))
+
             elif bear_cross and qty_held > 0:
                 if self.stop_order_id is not None:
                     ctx.cancel(self.stop_order_id)
                     self.stop_order_id = None
-                ctx.submit(Order(self.symbol, Side.SELL, self.qty, OrderType.MARKET, tag="exit"))
+                # exit exactly what we hold (accounts for partial fills)
+                ctx.submit(Order(self.symbol, Side.SELL, qty_held,
+                                 OrderType.MARKET, tag="exit"))
+                self._entry_qty = 0
 
         self.prev_fast, self.prev_slow = fast, slow
 
     def on_square_off(self, bar: Bar) -> None:
-        # intraday: reset per-day state so each session starts clean
         self.stop_order_id = None
         self.prev_fast = self.prev_slow = None
         self.closes.clear()
+        self._entry_qty = 0

@@ -15,6 +15,7 @@ from .engine import SimulationEngine
 from .feed import CsvBarFeed, MarketDataFeed, SyntheticIntradayFeed
 from .models import Bar, Fill, Order, OrderStatus, OrderType, Position, Side
 from .portfolio import Portfolio
+from .sizer import PositionSizer, SizingMethod
 from .strategy import Context, SmaCrossStrategy, Strategy
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "MarketDataFeed", "SyntheticIntradayFeed", "CsvBarFeed",
     "Broker", "SimulatedBroker", "Portfolio",
     "Strategy", "Context", "SmaCrossStrategy", "SimulationEngine",
+    "PositionSizer", "SizingMethod",
 ]

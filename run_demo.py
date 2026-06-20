@@ -30,8 +30,9 @@ import sys
 import urllib.request
 from datetime import time
 
-from trading_sim import (IntradayEquityCostModel, Portfolio, SimulatedBroker,
-                         SimulationEngine, SmaCrossStrategy, SyntheticIntradayFeed)
+from trading_sim import (IntradayEquityCostModel, Portfolio, PositionSizer,
+                         SimulatedBroker, SimulationEngine, SmaCrossStrategy,
+                         SyntheticIntradayFeed)
 from trading_sim.broker_angel import AngelOneBroker
 from trading_sim.feed import CsvBarFeed
 from trading_sim.feed_angel import AngelOneFeed, AngelOneMultiFeed, angel_login
@@ -110,6 +111,11 @@ def main() -> None:
                         help="NSE trading symbol, e.g. RELIANCE-EQ — auto-inferred if omitted")
     parser.add_argument("--universe", metavar="NAME", choices=["nifty50"],
                         help="Trade a whole universe: nifty50 (requires refresh_tokens.py)")
+    parser.add_argument("--sizer", default="risk",
+                        choices=["equal_capital", "risk", "volatility"],
+                        help="Position sizing method (default: risk)")
+    parser.add_argument("--risk-per-trade", type=float, default=0.01,
+                        help="Fraction of capital to risk per trade (default: 0.01 = 1%%)")
     args = parser.parse_args()
 
     broker     = None
@@ -216,11 +222,26 @@ def main() -> None:
         broker = SimulatedBroker(cost_model=IntradayEquityCostModel())
 
     # ------------------------------------------------------------------
+    # Position sizer — shared across all strategies
+    # ------------------------------------------------------------------
+
+    CAPITAL = 1_000_000.0
+    sizer = PositionSizer(
+        method=args.sizer,
+        capital=CAPITAL,
+        num_symbols=len(strategies),
+        risk_per_trade=args.risk_per_trade,
+        stop_pct=0.004,
+    )
+    for strat in strategies.values():
+        strat.sizer = sizer
+
+    # ------------------------------------------------------------------
     # Run
     # ------------------------------------------------------------------
 
-    portfolio = Portfolio(starting_cash=1_000_000.0)
-    engine    = SimulationEngine(feed, broker, portfolio, strategies,
+    portfolio = Portfolio(starting_cash=CAPITAL)
+    engine = SimulationEngine(feed, broker, portfolio, strategies,
                                  square_off_time=time(15, 15))
     engine.run()
 

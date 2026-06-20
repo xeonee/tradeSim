@@ -92,6 +92,7 @@ trading_sim/
   broker_angel.py - AngelOneBroker (live NSE orders via SmartAPI)
   costs.py        - IntradayEquityCostModel (NSE intraday charges, configurable)
   portfolio.py    - cash, positions, PnL, equity curve
+  sizer.py        - PositionSizer (equal_capital / risk / volatility)
   strategy.py     - Strategy + Context interface, SmaCrossStrategy
   engine.py       - clock / event loop, per-symbol square-off, multi-strategy dispatch
   metrics.py      - performance_report() + format_report()
@@ -123,9 +124,32 @@ SimulatedBroker(
 )
 ```
 
+### Position sizing (`trading_sim/sizer.py`)
+
+`PositionSizer` is passed to `SmaCrossStrategy` and computes qty dynamically
+on every entry signal. Three methods, all configurable:
+
+```python
+PositionSizer(
+    method="risk",           # "equal_capital" | "risk" | "volatility"
+    capital=1_000_000,
+    num_symbols=1,           # universe size (used by equal_capital)
+    risk_per_trade=0.01,     # 1% of capital at risk per trade
+    stop_pct=0.004,          # must match strategy stop (used by risk method)
+    vol_lookback=20,         # bars of history for volatility estimation
+    max_position_pct=0.20,   # hard cap: no position > 20% of capital
+)
+```
+
+Select via CLI:
+```bash
+python3 run_demo.py --sizer risk            # default
+python3 run_demo.py --sizer equal_capital
+python3 run_demo.py --sizer volatility
+python3 run_demo.py --sizer risk --risk-per-trade 0.005
+```
+
 ### Known simplifications
-- `SmaCrossStrategy` qty is fixed (100 shares for single symbol, 10 for NIFTY 50).
-  Proper volatility- or capital-based position sizing is not yet implemented.
 - Cost rates are 2026 NSE intraday-equity defaults — re-verify against
   zerodha.com/charges periodically; they're config (`CostConfig`), not magic numbers.
 - NIFTY 50 composition in `refresh_tokens.py` should be verified against NSE's
@@ -136,9 +160,9 @@ SimulatedBroker(
 2. ✅ Realistic fills (spread, slippage, partial fills) — `broker.py` only
 3. ✅ Live forward-paper-trading via Angel One websocket (`AngelOneFeed`)
 4. ✅ Live `Broker` implementation against Angel One SmartAPI (`AngelOneBroker`)
+5. ✅ Position sizing — equal capital, risk-based, volatility-based (`sizer.py`)
 
 ### Next steps
-- Position sizing (Kelly / volatility-adjusted) for multi-symbol runs
 - Multi-symbol CSV backtesting support
 - Strategy performance breakdown per symbol in the report
 - Websocket reconnection logic for long-running sessions
