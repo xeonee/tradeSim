@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+
+# generated output files
+trades.csv
+equity_curve.csv
+equity_curve.png
+
+# token cache — regenerate with refresh_tokens.py
+nifty50_tokens.json
